@@ -14,7 +14,10 @@ from gaussian import apply_pivot_filter
 from candle_patterns import detect_candle_patterns
 from market_data_manager import update_all_1m_data
 from plyer import notification
-import winsound
+try:
+    import winsound
+except ImportError:
+    winsound = None
 
 
 STOCK_LIST = [
@@ -73,8 +76,9 @@ STOCK_LIST = [
 def send_windows_notification(message):
 
     try:
-        winsound.Beep(1500, 500)
-        winsound.Beep(1500, 500)
+        if winsound:
+            winsound.Beep(1500, 500)
+            winsound.Beep(1500, 500)
         notification.notify(
             title="🚨 Gaussian Signal",
             message=message,
