@@ -2,7 +2,6 @@ streamlit==1.67.0
 pandas
 numpy
 plotly
-pandas-ta
 streamlit-autorefresh
 yfinance
 TA-Lib

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import pandas_ta as ta
+#import pandas_ta as ta
 from streamlit_autorefresh import st_autorefresh
 from scanner import load_indices
 from gaussian import gaussian_channel
@@ -353,27 +353,42 @@ banknifty_1m = gaussian_channel(banknifty_1m)
 nifty_1m = detect_candle_patterns(nifty_1m)
 banknifty_1m = detect_candle_patterns(banknifty_1m)
 # 1 Minute EMA
-nifty_1m["EMA44"] = ta.ema(nifty_1m["Close"], length=44)
-nifty_1m["EMA200"] = ta.ema(nifty_1m["Close"], length=200)
+nifty_1m["EMA44"] = (
+    nifty_1m["Close"]
+    .ewm(span=44, adjust=False)
+    .mean()
+)
+nifty_1m["EMA200"] = (
+    nifty_1m["Close"]
+    .ewm(span=200, adjust=False)
+    .mean()
+)
 
-banknifty_1m["EMA44"] = ta.ema(banknifty_1m["Close"], length=44)
-banknifty_1m["EMA200"] = ta.ema(banknifty_1m["Close"], length=200)
+banknifty_1m["EMA44"] = (
+    banknifty_1m["Close"]
+    .ewm(span=44, adjust=False)
+    .mean())
+banknifty_1m["EMA200"] = (
+    banknifty_1m["Close"]
+    .ewm(span=200, adjust=False)
+    .mean())
 
 if selected_stock_df is not None:
 
     stock_5m = gaussian_channel(stock_5m)
-
     stock_1m = gaussian_channel(stock_1m)
     stock_1m = detect_candle_patterns(stock_1m)
 
-    stock_1m["EMA44"] = ta.ema(
-        stock_1m["Close"],
-        length=44
+    stock_1m["EMA44"] = (
+        stock_1m["Close"]
+    .ewm(span=44, adjust=False)
+    .mean()
     )
 
-    stock_1m["EMA200"] = ta.ema(
-        stock_1m["Close"],
-        length=200
+    stock_1m["EMA200"] = (
+        stock_1m["Close"]
+    .ewm(span=200, adjust=False)
+    .mean()
     )
 
     stock_5m["BUY"] = False
@@ -662,35 +677,6 @@ else:
 
     stock_5m = stock_5m.tail(75).copy()
 
-st_nifty = ta.supertrend(
-    high=nifty["High"],
-    low=nifty["Low"],
-    close=nifty["Close"],
-    length=2,
-    multiplier=1
-)
-
-
-if st_nifty is not None:
-    nifty["SUPERT"] = st_nifty.iloc[:, 0]
-else:
-    st.error("SuperTrend returned None")
-    st.stop()
-
-st_bank = ta.supertrend(
-    high=banknifty["High"],
-    low=banknifty["Low"],
-    close=banknifty["Close"],
-    length=2,
-    multiplier=1
-)
-
-
-if st_bank is not None:
-    banknifty["SUPERT"] = st_bank.iloc[:, 0]
-else:
-    st.error("SuperTrend returned None")
-    st.stop()
 
 def pivot_levels(df, selected_date=None):
 

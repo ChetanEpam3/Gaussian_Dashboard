@@ -2,7 +2,9 @@ import os
 import pandas as pd
 import yfinance as yf
 
-DATA_FOLDER = r"C:\Users\ChetanPatil3\OneDrive - EPAM\Stock_Market_Data"
+DATA_FOLDER = "Stock_Market_Data"
+
+os.makedirs(DATA_FOLDER, exist_ok=True)
 
 SYMBOLS = [
     "^NSEI",
