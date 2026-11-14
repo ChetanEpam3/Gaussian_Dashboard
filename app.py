@@ -13,7 +13,7 @@ from gaussian import (
 from gaussian import apply_pivot_filter
 from candle_patterns import detect_candle_patterns
 from market_data_manager import update_all_1m_data
-from plyer import notification
+#from plyer import notification
 try:
     import winsound
 except ImportError:
@@ -72,21 +72,18 @@ STOCK_LIST = [
     "TECHM.NS"
 ]
 
-
 def send_windows_notification(message):
 
     try:
         if winsound:
             winsound.Beep(1500, 500)
             winsound.Beep(1500, 500)
-        notification.notify(
-            title="🚨 Gaussian Signal",
-            message=message,
-            app_name="Gaussian Dashboard",
-            timeout=10
-        )
+
+        print(message)
+
     except Exception as e:
         print("Notification Error:", e)
+
 
 def get_market_holidays(df):
 
