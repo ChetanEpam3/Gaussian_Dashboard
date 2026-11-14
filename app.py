@@ -324,6 +324,14 @@ else:
     nifty_1m = load_index_from_folder("^NSEI")
     banknifty_1m = load_index_from_folder("^NSEBANK")
 
+    if nifty_1m is None:
+        st.error("NSEI.csv not found")
+        st.stop()
+
+    if banknifty_1m is None:
+        st.error("NSEBANK.csv not found")
+        st.stop()
+
 
 
 nifty_1m.index = pd.to_datetime(
