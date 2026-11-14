@@ -217,7 +217,7 @@ def load_stock_from_folder(stock_symbol):
     ) + ".csv"
 
     csv_path = os.path.join(
-        r"C:\Users\ChetanPatil3\OneDrive - EPAM\Stock_Market_Data",
+        "Stock_Market_Data",
         file_name
     )
 
@@ -292,7 +292,7 @@ def load_index_from_folder(symbol):
     ) + ".csv"
 
     csv_path = os.path.join(
-        r"C:\Users\ChetanPatil3\OneDrive - EPAM\Stock_Market_Data",
+        "Stock_Market_Data",
         file_name
     )
 
