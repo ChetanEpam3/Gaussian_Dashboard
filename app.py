@@ -108,6 +108,63 @@ def get_market_holidays(df):
 
     return holiday_days
 
+
+def resample_ohlcv(df, interval):
+    aggregation = {
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+    }
+
+    if "Volume" in df.columns:
+        aggregation["Volume"] = "sum"
+
+    return (
+        df.resample(interval, closed="left", label="left")
+        .agg(aggregation)
+        .dropna(subset=["Open", "High", "Low", "Close"])
+    )
+
+
+def prepare_three_minute_data(df):
+    data = resample_ohlcv(df, "3min")
+    data = gaussian_channel(data)
+    data = detect_candle_patterns(data)
+
+    data["EMA44"] = data["Close"].ewm(
+        span=44,
+        adjust=False
+    ).mean()
+    data["EMA200"] = data["Close"].ewm(
+        span=200,
+        adjust=False
+    ).mean()
+
+    return data
+
+
+def add_five_minute_channel_projection(data, five_minute_data):
+    five_minute_curve = (
+        five_minute_data[["SMAX", "SMIN"]]
+        .resample("3min")
+        .interpolate(method="linear")
+    )
+
+    data["SMAX_5M"] = (
+        five_minute_curve["SMAX"]
+        .reindex(data.index)
+        .ffill()
+    )
+    data["SMIN_5M"] = (
+        five_minute_curve["SMIN"]
+        .reindex(data.index)
+        .ffill()
+    )
+
+    return data
+
+
 st.set_page_config(
     page_title="Gaussian Dashboard",
     layout="wide"
@@ -144,8 +201,8 @@ else:
         key="history_refresh"
     )
 
-head1, head2, head3, head4, head5 = st.columns(
-    [5, 2, 2, 1, 2]
+head1, head2, head3, head4, head5, head6 = st.columns(
+    [5, 1.5, 2.4, 2, 1, 1.5]
 )
 
 with head1:
@@ -165,6 +222,13 @@ with head1:
     )
 
 with head2:
+    show_three_minute_chart = st.checkbox(
+        "3 Min Chart",
+        value=False,
+        key="three_minute_chart_toggle"
+    )
+
+with head3:
 
     if st.button(
         "📥 Stock Market Data",
@@ -181,7 +245,7 @@ with head2:
             "Database Updated Successfully"
         )
 
-with head3:
+with head4:
 
     selected_stock = st.selectbox(
         "Stock",
@@ -191,7 +255,7 @@ with head3:
     )
 
 
-with head4:
+with head5:
     today = st.checkbox(
         "Today",
         value=st.session_state.today_mode,
@@ -199,7 +263,7 @@ with head4:
     )
     st.session_state.today_mode = today
 
-with head5:
+with head6:
     selected_date = st.date_input(
         "Select Date",
         value=pd.Timestamp.today(),
@@ -561,6 +625,33 @@ if selected_stock_df is not None:
         nifty_1m
     )
 
+nifty_3m = prepare_three_minute_data(nifty_1m)
+banknifty_3m = prepare_three_minute_data(banknifty_1m)
+
+nifty_3m = add_five_minute_channel_projection(
+    nifty_3m,
+    nifty
+)
+banknifty_3m = add_five_minute_channel_projection(
+    banknifty_3m,
+    banknifty
+)
+nifty_3m, banknifty_3m = add_confirmed_signals(
+    nifty_3m,
+    banknifty_3m
+)
+
+if selected_stock_df is not None:
+    stock_3m = prepare_three_minute_data(selected_stock_df)
+    stock_3m = add_five_minute_channel_projection(
+        stock_3m,
+        stock_5m
+    )
+    stock_3m = add_stock_confirmed_signals(
+        stock_3m,
+        nifty_3m
+    )
+
 latest_signal = ""
 
 # NIFTY 5m
@@ -692,6 +783,9 @@ def pivot_levels(df, selected_date=None):
             "Close": "last"
         }
     ).dropna()
+
+    if len(daily) < 2:
+        return None
 
     if selected_date is None:
 
@@ -1779,13 +1873,13 @@ col3, col4 = st.columns(2)
 
 with col3:
 
-    st.markdown("""
+    st.markdown(f"""
     <h2 style="
         margin-bottom:-10px;
         margin-top:0px;
         text-align:center;
     ">
-    NIFTY 1 MIN
+    NIFTY {"3 MIN" if show_three_minute_chart else "1 MIN"}
     </h2>
     """, unsafe_allow_html=True)
 
@@ -2110,11 +2204,7 @@ with col3:
         range=[y_min, y_max]
     )
 
-    st.plotly_chart(
-        nifty_1m_fig,
-        width="stretch",
-        config={"displayModeBar": False}
-    )
+    nifty_chart_slot = st.empty()
 
 with col4:
 
@@ -2132,9 +2222,9 @@ with col4:
         text-align:center;
     ">
     {
-        "BANKNIFTY 1 MIN"
+        f"BANKNIFTY {'3 MIN' if show_three_minute_chart else '1 MIN'}"
         if selected_stock_df is None
-        else f"{selected_stock} 1 MIN"
+        else f"{selected_stock} {'3 MIN' if show_three_minute_chart else '1 MIN'}"
     }
     </h2>
     """, unsafe_allow_html=True)
@@ -2445,7 +2535,224 @@ with col4:
         range=[y_min, y_max]
     )
 
-    st.plotly_chart(
+    bank_chart_slot = st.empty()
+
+def build_three_minute_chart(data, pivot_source):
+    if st.session_state.today_mode:
+        today_date = pd.Timestamp.today().date()
+        chart_data = data[data.index.date == today_date].copy()
+        pivots = pivot_levels(pivot_source)
+    else:
+        chart_data = filter_day_data(data, selected_date).copy()
+        pivots = pivot_levels(pivot_source, selected_date)
+
+    if chart_data.empty:
+        return None
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Candlestick(
+            x=chart_data.index,
+            open=chart_data["Open"],
+            high=chart_data["High"],
+            low=chart_data["Low"],
+            close=chart_data["Close"],
+            increasing=dict(
+                line=dict(color="#00C853", width=1.5),
+                fillcolor="#00C853"
+            ),
+            decreasing=dict(
+                line=dict(color="#FF1744", width=1.5),
+                fillcolor="#FF1744"
+            )
+        )
+    )
+
+    for column, color, width, dash in [
+        ("GMA", "blue", None, None),
+        ("SMAX", "purple", None, None),
+        ("SMIN", "purple", None, None),
+        ("SMAX_5M", "white", 2, "dot"),
+        ("SMIN_5M", "white", 2, "dot"),
+        ("EMA44", "orange", 4, None),
+        ("EMA200", "cyan", 4, None),
+    ]:
+        line = {"color": color}
+        if width is not None:
+            line["width"] = width
+        if dash is not None:
+            line["dash"] = dash
+
+        fig.add_trace(
+            go.Scatter(
+                x=chart_data.index,
+                y=chart_data[column],
+                name=column,
+                line=line
+            )
+        )
+
+    if pivots is not None:
+        pp, r1, r2, r3, s1, s2, s3 = pivots
+        chart_data = mark_pivot_reversal_candles(
+            chart_data,
+            [pp, r1, r2, r3, s1, s2, s3],
+            pivot_distance_pct=0.0005
+        )
+        chart_data = mark_gaussian_reversal_candles(
+            chart_data,
+            distance_pct=0.0002
+        )
+
+        for pattern_column, color in [
+            ("PIVOT_REVERSAL", "yellow"),
+            ("GAUSSIAN_REVERSAL", "deeppink"),
+        ]:
+            pattern_data = chart_data[chart_data[pattern_column]]
+            if not pattern_data.empty:
+                fig.add_trace(
+                    go.Candlestick(
+                        x=pattern_data.index,
+                        open=pattern_data["Open"],
+                        high=pattern_data["High"],
+                        low=pattern_data["Low"],
+                        close=pattern_data["Close"],
+                        increasing=dict(
+                            line=dict(color=color, width=3),
+                            fillcolor=color
+                        ),
+                        decreasing=dict(
+                            line=dict(color=color, width=3),
+                            fillcolor=color
+                        ),
+                        showlegend=False
+                    )
+                )
+
+        pivot_levels_to_show = [
+            (pp, "PP"),
+            (r1, "R1"),
+            (r2, "R2"),
+            (r3, "R3"),
+            (s1, "S1"),
+            (s2, "S2"),
+            (s3, "S3")
+        ]
+    else:
+        pivot_levels_to_show = []
+
+    chart_high = chart_data["High"].max()
+    chart_low = chart_data["Low"].min()
+    buffer = (chart_high - chart_low) * 0.10
+    if buffer == 0:
+        buffer = abs(chart_high) * 0.001
+
+    pivot_colors = {
+        "PP": "yellow",
+        "R1": "red",
+        "R2": "darkred",
+        "R3": "darkred",
+        "S1": "green",
+        "S2": "darkgreen",
+        "S3": "darkgreen"
+    }
+
+    for level, name in pivot_levels_to_show:
+        if chart_low - buffer <= level <= chart_high + buffer:
+            fig.add_hline(
+                y=level,
+                line_color=pivot_colors[name],
+                opacity=0.8,
+                annotation_text=name,
+                annotation_position="right"
+            )
+
+    buy_data = chart_data[chart_data["BUY"]]
+    sell_data = chart_data[chart_data["SELL"]]
+    fig.add_trace(
+        go.Scatter(
+            x=buy_data.index,
+            y=buy_data["Low"] * 0.999,
+            mode="markers",
+            marker=dict(color="green", size=16, symbol="triangle-up")
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=sell_data.index,
+            y=sell_data["High"] * 1.001,
+            mode="markers",
+            marker=dict(color="red", size=16, symbol="triangle-down")
+        )
+    )
+
+    initial_bars = 60
+    start_x = (
+        chart_data.index[-initial_bars]
+        if len(chart_data) > initial_bars
+        else chart_data.index[0]
+    )
+    end_x = chart_data.index[-1] + pd.Timedelta(minutes=10)
+
+    fig.update_layout(
+        showlegend=False,
+        height=750,
+        bargap=0,
+        margin=dict(l=2, r=2, t=1, b=5),
+        xaxis_rangeslider_visible=True
+    )
+    fig.update_xaxes(range=[start_x, end_x])
+    fig.update_yaxes(range=[chart_low - buffer, chart_high + buffer])
+
+    return fig
+
+
+if show_three_minute_chart:
+    nifty_3m_fig = build_three_minute_chart(
+        nifty_3m,
+        nifty_full
+    )
+    if nifty_3m_fig is None:
+        nifty_chart_slot.info(
+            "No NIFTY 3-minute data is available for this date."
+        )
+    else:
+        nifty_chart_slot.plotly_chart(
+            nifty_3m_fig,
+            width="stretch",
+            config={"displayModeBar": False}
+        )
+
+    if selected_stock_df is None:
+        bank_3m_data = banknifty_3m
+        bank_3m_pivot_source = banknifty_full
+        bank_3m_title = "BANKNIFTY 3 MIN"
+    else:
+        bank_3m_data = stock_3m
+        bank_3m_pivot_source = stock_full
+
+    bank_3m_fig = build_three_minute_chart(
+        bank_3m_data,
+        bank_3m_pivot_source
+    )
+    if bank_3m_fig is None:
+        bank_chart_slot.info(
+            f"No {bank_3m_title} data is available for this date."
+        )
+    else:
+        bank_chart_slot.plotly_chart(
+            bank_3m_fig,
+            width="stretch",
+            config={"displayModeBar": False}
+        )
+else:
+    nifty_chart_slot.plotly_chart(
+        nifty_1m_fig,
+        width="stretch",
+        config={"displayModeBar": False}
+    )
+    bank_chart_slot.plotly_chart(
         bank_1m_fig,
         width="stretch",
         config={"displayModeBar": False}
