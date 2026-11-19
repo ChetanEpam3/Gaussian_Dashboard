@@ -1364,30 +1364,30 @@ nifty_fig.add_trace(
 )
 
 # 1 Min SMAX on 5 Min Chart
-nifty_fig.add_trace(
-    go.Scatter(
-        x=nifty.index,
-        y=nifty["SMAX_1M"],
-        line=dict(
-            color="white",
-            width=2,
-            dash="dot"
-        )
-    )
-)
+# nifty_fig.add_trace(
+#     go.Scatter(
+#         x=nifty.index,
+#         y=nifty["SMAX_1M"],
+#         line=dict(
+#             color="white",
+#             width=2,
+#             dash="dot"
+#         )
+#     )
+# )
 
 # 1 Min SMIN on 5 Min Chart
-nifty_fig.add_trace(
-    go.Scatter(
-        x=nifty.index,
-        y=nifty["SMIN_1M"],
-        line=dict(
-            color="white",
-            width=2,
-            dash="dot"
-        )
-    )
-)
+# nifty_fig.add_trace(
+#     go.Scatter(
+#         x=nifty.index,
+#         y=nifty["SMIN_1M"],
+#         line=dict(
+#             color="white",
+#             width=2,
+#             dash="dot"
+#         )
+#     )
+# )
 
 if st.session_state.today_mode:
 
@@ -1577,30 +1577,30 @@ bank_fig.add_trace(
 )
 
 # 1 Min SMAX
-bank_fig.add_trace(
-    go.Scatter(
-        x=banknifty.index,
-        y=banknifty["SMAX_1M"],
-        line=dict(
-            color="white",
-            width=2,
-            dash="dot"
-        )
-    )
-)
+# bank_fig.add_trace(
+#     go.Scatter(
+#         x=banknifty.index,
+#         y=banknifty["SMAX_1M"],
+#         line=dict(
+#             color="white",
+#             width=2,
+#             dash="dot"
+#         )
+#     )
+# )
 
 # 1 Min SMIN
-bank_fig.add_trace(
-    go.Scatter(
-        x=banknifty.index,
-        y=banknifty["SMIN_1M"],
-        line=dict(
-            color="white",
-            width=2,
-            dash="dot"
-        )
-    )
-)
+# bank_fig.add_trace(
+#     go.Scatter(
+#         x=banknifty.index,
+#         y=banknifty["SMIN_1M"],
+#         line=dict(
+#             color="white",
+#             width=2,
+#             dash="dot"
+#         )
+#     )
+# )
 
 bank_fig.update_yaxes(
     visible=False
