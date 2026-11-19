@@ -222,10 +222,10 @@ with head1:
     )
 
 with head2:
-    show_three_minute_chart = st.checkbox(
-        "3 Min Chart",
+    show_one_minute_chart = st.checkbox(
+        "1 Min Chart",
         value=False,
-        key="three_minute_chart_toggle"
+        key="one_minute_chart_toggle"
     )
 
 with head3:
@@ -1879,7 +1879,7 @@ with col3:
         margin-top:0px;
         text-align:center;
     ">
-    NIFTY {"3 MIN" if show_three_minute_chart else "1 MIN"}
+    NIFTY {"1 MIN" if show_one_minute_chart else "3 MIN"}
     </h2>
     """, unsafe_allow_html=True)
 
@@ -2222,9 +2222,9 @@ with col4:
         text-align:center;
     ">
     {
-        f"BANKNIFTY {'3 MIN' if show_three_minute_chart else '1 MIN'}"
+        f"BANKNIFTY {'1 MIN' if show_one_minute_chart else '3 MIN'}"
         if selected_stock_df is None
-        else f"{selected_stock} {'3 MIN' if show_three_minute_chart else '1 MIN'}"
+        else f"{selected_stock} {'1 MIN' if show_one_minute_chart else '3 MIN'}"
     }
     </h2>
     """, unsafe_allow_html=True)
@@ -2708,7 +2708,7 @@ def build_three_minute_chart(data, pivot_source):
     return fig
 
 
-if show_three_minute_chart:
+if not show_one_minute_chart:
     nifty_3m_fig = build_three_minute_chart(
         nifty_3m,
         nifty_full
