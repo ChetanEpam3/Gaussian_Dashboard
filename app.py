@@ -1,6 +1,8 @@
+import json
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import uuid
 #import pandas_ta as ta
 from streamlit_autorefresh import st_autorefresh
 from scanner import load_indices
@@ -13,11 +15,6 @@ from gaussian import (
 from gaussian import apply_pivot_filter
 from candle_patterns import detect_candle_patterns
 from market_data_manager import update_all_1m_data
-#from plyer import notification
-try:
-    import winsound
-except ImportError:
-    winsound = None
 
 
 STOCK_LIST = [
@@ -71,19 +68,6 @@ STOCK_LIST = [
     "TATASTEEL.NS",
     "TECHM.NS"
 ]
-
-def send_windows_notification(message):
-
-    try:
-        if winsound:
-            winsound.Beep(1500, 500)
-            winsound.Beep(1500, 500)
-
-        print(message)
-
-    except Exception as e:
-        print("Notification Error:", e)
-
 
 def get_market_holidays(df):
 
@@ -668,6 +652,20 @@ elif banknifty["BUY"].iloc[-1]:
 elif banknifty["SELL"].iloc[-1]:
     latest_signal = "BANKNIFTY 5M SELL"
 
+# NIFTY 3m
+elif nifty_3m["BUY"].iloc[-1]:
+    latest_signal = "NIFTY 3M BUY"
+
+elif nifty_3m["SELL"].iloc[-1]:
+    latest_signal = "NIFTY 3M SELL"
+
+# BANKNIFTY 3m
+elif banknifty_3m["BUY"].iloc[-1]:
+    latest_signal = "BANKNIFTY 3M BUY"
+
+elif banknifty_3m["SELL"].iloc[-1]:
+    latest_signal = "BANKNIFTY 3M SELL"
+
 # NIFTY 1m
 elif nifty_1m["BUY"].iloc[-1]:
     latest_signal = "NIFTY 1M BUY"
@@ -691,14 +689,126 @@ if (
     latest_signal != st.session_state.last_signal
 ):
 
-    st.session_state.last_signal = latest_signal
+    st.session_state.sound_event_id = uuid.uuid4().hex
 
     st.toast(
         f"🔔 {latest_signal}",
         icon="🚀"
     )
 
-    send_windows_notification(latest_signal)
+st.session_state.last_signal = latest_signal
+
+sound_event_id = st.session_state.get("sound_event_id", "")
+sound_event_id_json = json.dumps(sound_event_id)
+
+st.html(
+    f"""
+    <div class="gaussian-sound-controls" style="
+        display:flex;
+        align-items:center;
+        gap:10px;
+        margin:4px 0 12px;
+    ">
+        <button type="button" class="enable-sound" style="
+            padding:8px 12px;
+            border:0;
+            border-radius:6px;
+            background:#00C853;
+            color:#0E1117;
+            font-weight:600;
+            cursor:pointer;
+        ">Enable Browser Sound</button>
+        <button type="button" class="test-sound" style="
+            padding:8px 12px;
+            border:1px solid #888;
+            border-radius:6px;
+            background:#1E1E1E;
+            color:#FAFAFA;
+            cursor:pointer;
+        ">Test Sound</button>
+        <span class="sound-status" role="status" aria-live="polite"></span>
+    </div>
+    <script>
+    (() => {{
+        const root = document.querySelector(".gaussian-sound-controls");
+        const enableButton = root.querySelector(".enable-sound");
+        const testButton = root.querySelector(".test-sound");
+        const status = root.querySelector(".sound-status");
+        const eventId = {sound_event_id_json};
+        const enabledKey = "gaussian-dashboard-sound-enabled";
+        const playedKey = "gaussian-dashboard-last-sound-event";
+
+        function getAudioContext() {{
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextClass) {{
+                throw new Error("Web Audio is not supported in this browser.");
+            }}
+            if (!window.__gaussianDashboardAudioContext) {{
+                window.__gaussianDashboardAudioContext = new AudioContextClass();
+            }}
+            return window.__gaussianDashboardAudioContext;
+        }}
+
+        function playBeep(context) {{
+            const startAt = context.currentTime;
+            [880, 660].forEach((frequency, index) => {{
+                const start = startAt + index * 0.42;
+                const oscillator = context.createOscillator();
+                const gain = context.createGain();
+                oscillator.type = "sine";
+                oscillator.frequency.setValueAtTime(frequency, start);
+                gain.gain.setValueAtTime(0.0001, start);
+                gain.gain.exponentialRampToValueAtTime(0.18, start + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
+                oscillator.connect(gain);
+                gain.connect(context.destination);
+                oscillator.start(start);
+                oscillator.stop(start + 0.34);
+            }});
+        }}
+
+        async function enableSound() {{
+            try {{
+                const context = getAudioContext();
+                await context.resume();
+                localStorage.setItem(enabledKey, "true");
+                playBeep(context);
+                if (eventId) {{
+                    localStorage.setItem(playedKey, eventId);
+                }}
+                status.textContent = "Sound enabled. Keep this dashboard open for alerts.";
+            }} catch (error) {{
+                status.textContent = "Could not enable sound: " + error.message;
+                console.error("Unable to enable dashboard sound", error);
+            }}
+        }}
+
+        enableButton.addEventListener("click", enableSound);
+        testButton.addEventListener("click", enableSound);
+
+        if (localStorage.getItem(enabledKey) === "true") {{
+            enableButton.textContent = "Browser Sound Enabled";
+            const context = window.__gaussianDashboardAudioContext;
+            if (
+                eventId
+                && context
+                && context.state === "running"
+                && localStorage.getItem(playedKey) !== eventId
+            ) {{
+                playBeep(context);
+                localStorage.setItem(playedKey, eventId);
+                status.textContent = "Signal sound played.";
+            }} else {{
+                status.textContent = "Sound is enabled for this browser.";
+            }}
+        }} else {{
+            status.textContent = "Click Enable Browser Sound once to allow audio.";
+        }}
+    }})();
+    </script>
+    """,
+    unsafe_allow_javascript=True
+)
 
 
 def filter_day_data(df, selected_date):
@@ -2756,14 +2866,4 @@ else:
         bank_1m_fig,
         width="stretch",
         config={"displayModeBar": False}
-    )
-
-if st.button("Test Notification"):
-
-    send_windows_notification(
-        "TEST BUY SIGNAL"
-    )
-
-    st.success(
-        "Notification Sent"
     )
