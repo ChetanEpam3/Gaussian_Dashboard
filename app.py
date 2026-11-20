@@ -1975,31 +1975,14 @@ st.markdown("---")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown("""
-    <h2 style="
-        margin-bottom:-10px;
-        margin-top:0px;
-        text-align:center;
-    ">
-    NIFTY
-    </h2>
-    """, unsafe_allow_html=True)
     nifty_5m_chart_slot = st.empty()
 
 with col2:
-    st.markdown(f"""
-    <h2 style="
-        margin-bottom:-10px;
-        margin-top:0px;
-        text-align:center;
-    ">
-    {
+    bank_5m_title = (
         "BANKNIFTY"
         if selected_stock_df is None
         else selected_stock
-    }
-    </h2>
-    """, unsafe_allow_html=True)
+    )
     bank_5m_chart_slot = st.empty()
 
 with col3:
@@ -2853,13 +2836,34 @@ else:
         config={"displayModeBar": False}
     )
 
-nifty_5m_chart_slot.plotly_chart(
-    nifty_fig,
-    width="stretch",
-    config={"displayModeBar": False}
-)
-bank_5m_chart_slot.plotly_chart(
-    bank_fig,
-    width="stretch",
-    config={"displayModeBar": False}
-)
+with nifty_5m_chart_slot.container():
+    st.markdown("""
+    <h2 style="
+        margin-bottom:-10px;
+        margin-top:0px;
+        text-align:center;
+    ">
+    NIFTY
+    </h2>
+    """, unsafe_allow_html=True)
+    st.plotly_chart(
+        nifty_fig,
+        width="stretch",
+        config={"displayModeBar": False}
+    )
+
+with bank_5m_chart_slot.container():
+    st.markdown(f"""
+    <h2 style="
+        margin-bottom:-10px;
+        margin-top:0px;
+        text-align:center;
+    ">
+    {bank_5m_title}
+    </h2>
+    """, unsafe_allow_html=True)
+    st.plotly_chart(
+        bank_fig,
+        width="stretch",
+        config={"displayModeBar": False}
+    )
