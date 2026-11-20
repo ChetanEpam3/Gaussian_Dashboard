@@ -2867,3 +2867,63 @@ else:
         width="stretch",
         config={"displayModeBar": False}
     )
+
+st.html(
+    """
+    <script>
+    (() => {
+        const storageKey = "gaussian-dashboard-scroll-position";
+        const state = window.__gaussianDashboardScrollState ||
+            (window.__gaussianDashboardScrollState = {
+                restoreInProgress: false,
+                userScrollIntentUntil: 0
+            });
+
+        if (!window.__gaussianDashboardScrollListenerInstalled) {
+            window.__gaussianDashboardScrollListenerInstalled = true;
+
+            const noteUserIntent = () => {
+                state.userScrollIntentUntil = Date.now() + 1500;
+            };
+
+            ["wheel", "touchstart", "keydown", "pointerdown"].forEach((eventName) => {
+                window.addEventListener(eventName, noteUserIntent, {passive: true});
+            });
+
+            window.addEventListener("scroll", () => {
+                if (
+                    !state.restoreInProgress
+                    && Date.now() <= state.userScrollIntentUntil
+                ) {
+                    sessionStorage.setItem(storageKey, String(window.scrollY));
+                }
+            }, {passive: true});
+        }
+
+        const savedPosition = Number(sessionStorage.getItem(storageKey));
+        if (!Number.isFinite(savedPosition) || savedPosition <= 0) {
+            return;
+        }
+
+        state.restoreInProgress = true;
+        state.userScrollIntentUntil = 0;
+
+        const restoreScrollPosition = () => {
+            const maxScroll = Math.max(
+                0,
+                document.documentElement.scrollHeight - window.innerHeight
+            );
+            window.scrollTo(0, Math.min(savedPosition, maxScroll));
+        };
+
+        requestAnimationFrame(restoreScrollPosition);
+        window.setTimeout(restoreScrollPosition, 150);
+        window.setTimeout(restoreScrollPosition, 500);
+        window.setTimeout(() => {
+            state.restoreInProgress = false;
+        }, 700);
+    })();
+    </script>
+    """,
+    unsafe_allow_javascript=True
+)
