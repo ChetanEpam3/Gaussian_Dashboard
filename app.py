@@ -1940,6 +1940,36 @@ bank_fig.update_xaxes(
 )
 
 col3, col4 = st.columns(2)
+
+with col3:
+    st.markdown(f"""
+    <h2 style="
+        margin-bottom:-10px;
+        margin-top:0px;
+        text-align:center;
+    ">
+    NIFTY {"1 MIN" if show_one_minute_chart else "3 MIN"}
+    </h2>
+    """, unsafe_allow_html=True)
+    nifty_chart_slot = st.empty()
+
+with col4:
+    bank_minute_title = (
+        f"BANKNIFTY {'1 MIN' if show_one_minute_chart else '3 MIN'}"
+        if selected_stock_df is None
+        else f"{selected_stock} {'1 MIN' if show_one_minute_chart else '3 MIN'}"
+    )
+    st.markdown(f"""
+    <h2 style="
+        margin-bottom:-10px;
+        margin-top:0px;
+        text-align:center;
+    ">
+    {bank_minute_title}
+    </h2>
+    """, unsafe_allow_html=True)
+    bank_chart_slot = st.empty()
+
 st.markdown("---")
 
 col1, col2 = st.columns(2)
@@ -1954,11 +1984,7 @@ with col1:
     NIFTY
     </h2>
     """, unsafe_allow_html=True)
-    st.plotly_chart(
-        nifty_fig,
-        width="stretch",
-        config={"displayModeBar": False}
-    )
+    nifty_5m_chart_slot = st.empty()
 
 with col2:
     st.markdown(f"""
@@ -1974,23 +2000,9 @@ with col2:
     }
     </h2>
     """, unsafe_allow_html=True)
-    st.plotly_chart(
-        bank_fig,
-        width="stretch",
-        config={"displayModeBar": False}
-    )
+    bank_5m_chart_slot = st.empty()
 
 with col3:
-
-    st.markdown(f"""
-    <h2 style="
-        margin-bottom:-10px;
-        margin-top:0px;
-        text-align:center;
-    ">
-    NIFTY {"1 MIN" if show_one_minute_chart else "3 MIN"}
-    </h2>
-    """, unsafe_allow_html=True)
 
     if st.session_state.today_mode:
 
@@ -2264,14 +2276,6 @@ with col3:
         )
     )
 
-    buy_5m = nifty_1m[
-        nifty_1m["BUY_5M_BREAK"]
-    ]
-
-    sell_5m = nifty_1m[
-        nifty_1m["SELL_5M_BREAK"]
-    ]
-
     initial_bars = 60
 
     if len(nifty_1m) > initial_bars:
@@ -2313,8 +2317,6 @@ with col3:
         range=[y_min, y_max]
     )
 
-    nifty_chart_slot = st.empty()
-
 with col4:
 
     if (
@@ -2323,20 +2325,6 @@ with col4:
     ):
 
         banknifty_1m = stock_1m.copy()
-
-    st.markdown(f"""
-    <h2 style="
-        margin-bottom:-10px;
-        margin-top:0px;
-        text-align:center;
-    ">
-    {
-        f"BANKNIFTY {'1 MIN' if show_one_minute_chart else '3 MIN'}"
-        if selected_stock_df is None
-        else f"{selected_stock} {'1 MIN' if show_one_minute_chart else '3 MIN'}"
-    }
-    </h2>
-    """, unsafe_allow_html=True)
 
     if st.session_state.today_mode:
 
@@ -2644,8 +2632,6 @@ with col4:
         range=[y_min, y_max]
     )
 
-    bank_chart_slot = st.empty()
-
 def build_three_minute_chart(data, pivot_source):
     if st.session_state.today_mode:
         today_date = pd.Timestamp.today().date()
@@ -2866,3 +2852,14 @@ else:
         width="stretch",
         config={"displayModeBar": False}
     )
+
+nifty_5m_chart_slot.plotly_chart(
+    nifty_fig,
+    width="stretch",
+    config={"displayModeBar": False}
+)
+bank_5m_chart_slot.plotly_chart(
+    bank_fig,
+    width="stretch",
+    config={"displayModeBar": False}
+)
