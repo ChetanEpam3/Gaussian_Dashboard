@@ -185,8 +185,8 @@ else:
         key="history_refresh"
     )
 
-head1, head2, head3, head4, head5, head6 = st.columns(
-    [5, 1.5, 2.4, 2, 1, 1.5]
+head1, head2, head3, head4, head5, head6, head7 = st.columns(
+    [3.4, 1.5, 1.2, 2.4, 2, 1, 1.5]
 )
 
 with head1:
@@ -206,13 +206,16 @@ with head1:
     )
 
 with head2:
+    sound_controls_placeholder = st.empty()
+
+with head3:
     show_one_minute_chart = st.checkbox(
         "1 Min Chart",
         value=False,
         key="one_minute_chart_toggle"
     )
 
-with head3:
+with head4:
 
     if st.button(
         "📥 Stock Market Data",
@@ -229,7 +232,7 @@ with head3:
             "Database Updated Successfully"
         )
 
-with head4:
+with head5:
 
     selected_stock = st.selectbox(
         "Stock",
@@ -239,7 +242,7 @@ with head4:
     )
 
 
-with head5:
+with head6:
     today = st.checkbox(
         "Today",
         value=st.session_state.today_mode,
@@ -247,7 +250,7 @@ with head5:
     )
     st.session_state.today_mode = today
 
-with head6:
+with head7:
     selected_date = st.date_input(
         "Select Date",
         value=pd.Timestamp.today(),
@@ -701,42 +704,37 @@ st.session_state.last_signal = latest_signal
 sound_event_id = st.session_state.get("sound_event_id", "")
 sound_event_id_json = json.dumps(sound_event_id)
 
-st.html(
+sound_controls_placeholder.html(
     f"""
     <div class="gaussian-sound-controls" style="
         display:flex;
         align-items:center;
         gap:10px;
-        margin:4px 0 12px;
+        margin:0 0 8px;
     ">
         <button type="button" class="enable-sound" style="
             padding:8px 12px;
             border:0;
             border-radius:6px;
-            background:#00C853;
-            color:#0E1117;
+            background:#D32F2F;
+            color:#FAFAFA;
             font-weight:600;
             cursor:pointer;
-        ">Enable Browser Sound</button>
-        <button type="button" class="test-sound" style="
-            padding:8px 12px;
-            border:1px solid #888;
-            border-radius:6px;
-            background:#1E1E1E;
-            color:#FAFAFA;
-            cursor:pointer;
-        ">Test Sound</button>
-        <span class="sound-status" role="status" aria-live="polite"></span>
+        ">Enable Sound</button>
     </div>
     <script>
     (() => {{
         const root = document.querySelector(".gaussian-sound-controls");
         const enableButton = root.querySelector(".enable-sound");
-        const testButton = root.querySelector(".test-sound");
-        const status = root.querySelector(".sound-status");
         const eventId = {sound_event_id_json};
         const enabledKey = "gaussian-dashboard-sound-enabled";
         const playedKey = "gaussian-dashboard-last-sound-event";
+
+        function setSoundEnabled(enabled) {{
+            enableButton.style.backgroundColor = enabled ? "#00C853" : "#D32F2F";
+            enableButton.style.color = enabled ? "#0E1117" : "#FAFAFA";
+            enableButton.setAttribute("aria-pressed", String(enabled));
+        }}
 
         function getAudioContext() {{
             const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -767,27 +765,35 @@ st.html(
             }});
         }}
 
-        async function enableSound() {{
+        async function toggleSound() {{
+            if (localStorage.getItem(enabledKey) === "true") {{
+                localStorage.setItem(enabledKey, "false");
+                setSoundEnabled(false);
+                return;
+            }}
+
             try {{
                 const context = getAudioContext();
                 await context.resume();
+                if (context.state !== "running") {{
+                    throw new Error("The browser did not allow audio playback.");
+                }}
                 localStorage.setItem(enabledKey, "true");
-                playBeep(context);
                 if (eventId) {{
                     localStorage.setItem(playedKey, eventId);
                 }}
-                status.textContent = "Sound enabled. Keep this dashboard open for alerts.";
+                setSoundEnabled(true);
             }} catch (error) {{
-                status.textContent = "Could not enable sound: " + error.message;
                 console.error("Unable to enable dashboard sound", error);
+                setSoundEnabled(false);
             }}
         }}
 
-        enableButton.addEventListener("click", enableSound);
-        testButton.addEventListener("click", enableSound);
+        enableButton.addEventListener("click", toggleSound);
 
-        if (localStorage.getItem(enabledKey) === "true") {{
-            enableButton.textContent = "Browser Sound Enabled";
+        const soundEnabled = localStorage.getItem(enabledKey) === "true";
+        setSoundEnabled(soundEnabled);
+        if (soundEnabled) {{
             const context = window.__gaussianDashboardAudioContext;
             if (
                 eventId
@@ -797,12 +803,7 @@ st.html(
             ) {{
                 playBeep(context);
                 localStorage.setItem(playedKey, eventId);
-                status.textContent = "Signal sound played.";
-            }} else {{
-                status.textContent = "Sound is enabled for this browser.";
             }}
-        }} else {{
-            status.textContent = "Click Enable Browser Sound once to allow audio.";
         }}
     }})();
     </script>
