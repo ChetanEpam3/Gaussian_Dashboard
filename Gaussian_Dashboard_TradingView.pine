@@ -1,0 +1,330 @@
+//@version=6
+indicator("Gaussian Dashboard - TradingView", overlay=true, max_labels_count=500)
+
+// Gaussian Dashboard reference port.
+// The dashboard's active range settings are GMA 20, signal EMA 9,
+// high-low SMA 14, and a 0.9 band multiplier.
+// GMA resets at each exchange-calendar day:
+//   source = (high + low + close) / 3
+//   GMA = EMA(source, 20), restarted from the first source of the day
+//   SMax/SMin = GMA +/- SMA(high - low, 14) * 0.9
+// GSIGNAL is the session-reset EMA 9 of GMA; it is displayed optionally but
+// does not participate in SMax/SMin or buy/sell conditions.
+//
+// Signal choices:
+// - Peer-confirmed: close crosses SMax/SMin and the selected peer remains
+//   above its SMin / below its SMax, respectively.
+// - Band cross only: close crosses this chart's SMax/SMin.
+// - 5m band breakout: lower-timeframe close crosses the 5m SMax/SMin with
+//   the dashboard's three-bar same-direction cooldown.
+// - Legacy wick touch: close ends outside the band after touching it intrabar.
+// The dashboard computes 5m breakout flags separately; its displayed 1m
+// BUY/SELL columns are later set to the peer-confirmed band-cross signals.
+//
+// Five-minute pivot filtering delays a signal if the nearest daily pivot is
+// within the configured distance, waiting for a later high/low to break it.
+// Pivot reversal highlights are yellow; Gaussian-band reversals are pink.
+// Opposite-signal exits are optional alert/marker conveniences, not a source
+// dashboard exit rule (the Python project has no trade lifecycle/exit logic).
+// The patchy swing-range design in SWING_RANGE_DOCUMENTATION.md has no
+// corresponding Python implementation in this workspace and is not ported.
+// Candle pattern tests below are transparent shape-based approximations, not
+// byte-for-byte copies of TA-Lib's adaptive candle-setting implementation.
+
+string signalMode = input.string(
+     "Peer-confirmed band cross",
+     "Signal logic",
+     options=["Peer-confirmed band cross", "Band cross only", "5m band breakout (1m use)", "Legacy wick touch"])
+string peerSymbol = input.symbol("NSE:BANKNIFTY", "Peer / confirmation symbol")
+int gmaLength = input.int(20, "Gaussian EMA length", minval=1)
+int signalLength = input.int(9, "GMA signal EMA length", minval=1)
+int bandLength = input.int(14, "Band high-low SMA length", minval=1)
+float bandMultiplier = input.float(0.9, "Band multiplier", minval=0.0, step=0.1)
+bool usePivotFilter = input.bool(true, "Apply pivot delay on 5-minute signals")
+float pivotDistancePct = input.float(0.20, "Pivot filter distance (%)", minval=0.0, step=0.01) / 100.0
+int pivotWaitBars = input.int(4, "Pivot breakout wait (bars)", minval=1, maxval=20)
+int breakoutCooldown = input.int(3, "5m breakout cooldown (bars)", minval=0, maxval=100)
+string maType = input.string("EMA", "Moving average type", options=["EMA", "SMA"])
+int maFastLength = input.int(44, "Fast moving average length", minval=1)
+int maSlowLength = input.int(200, "Slow moving average length", minval=1)
+float pivotReversalPct = input.float(0.05, "Pivot reversal proximity (%)", minval=0.0, step=0.01) / 100.0
+float bandReversalPct = input.float(0.02, "5m band reversal proximity (%)", minval=0.0, step=0.01) / 100.0
+bool showGmaSignal = input.bool(false, "Show smoothed GMA signal line")
+bool showFiveMinuteBands = input.bool(true, "Show 5-minute bands on lower timeframes")
+bool showMovingAverages = input.bool(true, "Show moving averages")
+bool showPreviousDayPivots = input.bool(true, "Show previous-day pivot levels")
+bool showSignals = input.bool(true, "Show buy / sell markers")
+bool showReversalHighlights = input.bool(true, "Highlight pivot / Gaussian reversal candles")
+bool showDashboardCandleColors = input.bool(true, "Use dashboard up/down candle colors")
+bool showExitMarkers = input.bool(false, "Show opposite-signal exit markers")
+
+f_gaussianBands() =>
+    float source = hlc3
+    bool newSession = barstate.isfirst or ta.change(time("D")) != 0
+    float gmaAlpha = 2.0 / (gmaLength + 1.0)
+    float signalAlpha = 2.0 / (signalLength + 1.0)
+    var float gmaValue = na
+    var float signalValue = na
+    gmaValue := newSession or na(gmaValue[1]) ? source : gmaAlpha * source + (1.0 - gmaAlpha) * gmaValue[1]
+    signalValue := newSession or na(signalValue[1]) ? gmaValue : signalAlpha * gmaValue + (1.0 - signalAlpha) * signalValue[1]
+    float averageRange = ta.sma(high - low, bandLength)
+    float upperBand = gmaValue + averageRange * bandMultiplier
+    float lowerBand = gmaValue - averageRange * bandMultiplier
+    [gmaValue, signalValue, upperBand, lowerBand, close]
+
+f_nearestAbove(float price, float p0, float p1, float p2, float p3, float p4, float p5, float p6) =>
+    float nearest = na
+    for level in array.from(p0, p1, p2, p3, p4, p5, p6)
+        if not na(level) and level > price and (na(nearest) or level < nearest)
+            nearest := level
+    nearest
+
+f_nearestBelow(float price, float p0, float p1, float p2, float p3, float p4, float p5, float p6) =>
+    float nearest = na
+    for level in array.from(p0, p1, p2, p3, p4, p5, p6)
+        if not na(level) and level < price and (na(nearest) or level > nearest)
+            nearest := level
+    nearest
+
+f_nearLevel(float price, float level, float tolerance) =>
+    not na(level) and level != 0.0 and math.abs(price - level) / math.abs(level) <= tolerance
+
+f_nearAny(float price, float tolerance, float p0, float p1, float p2, float p3, float p4, float p5, float p6) =>
+    bool found = false
+    for level in array.from(p0, p1, p2, p3, p4, p5, p6)
+        if f_nearLevel(price, level, tolerance)
+            found := true
+    found
+
+f_betweenAny(float lowPrice, float highPrice, float p0, float p1, float p2, float p3, float p4, float p5, float p6) =>
+    bool found = false
+    for level in array.from(p0, p1, p2, p3, p4, p5, p6)
+        if not na(level) and lowPrice <= level and level <= highPrice
+            found := true
+    found
+
+[gma, gmaSignal, sMax, sMin, ignoredClose] = f_gaussianBands()
+[peerGma, peerSignal, peerSMax, peerSMin, peerClose] = request.security(
+     peerSymbol, timeframe.period, f_gaussianBands(),
+     gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[fiveGma, fiveSignal, fiveSMax, fiveSMin, fiveClose] = request.security(
+     syminfo.tickerid, "5", f_gaussianBands(),
+     gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+bool peerAvailable = not na(peerClose) and not na(peerSMax) and not na(peerSMin)
+bool upwardCross = ta.crossover(close, sMax)
+bool downwardCross = ta.crossunder(close, sMin)
+bool peerConfirmedBuy = upwardCross and peerAvailable and peerClose >= peerSMin
+bool peerConfirmedSell = downwardCross and peerAvailable and peerClose <= peerSMax
+bool legacyBuy = close > sMax and low < sMax
+bool legacySell = close < sMin and high > sMin
+bool fiveMinuteBuyCross = close > fiveSMax and close[1] <= fiveSMax[1]
+bool fiveMinuteSellCross = close < fiveSMin and close[1] >= fiveSMin[1]
+
+var int lastFiveMinuteBuyBar = na
+var int lastFiveMinuteSellBar = na
+bool cooledFiveMinuteBuy = fiveMinuteBuyCross and (na(lastFiveMinuteBuyBar) or bar_index - lastFiveMinuteBuyBar > breakoutCooldown)
+bool cooledFiveMinuteSell = fiveMinuteSellCross and (na(lastFiveMinuteSellBar) or bar_index - lastFiveMinuteSellBar > breakoutCooldown)
+if cooledFiveMinuteBuy
+    lastFiveMinuteBuyBar := bar_index
+if cooledFiveMinuteSell
+    lastFiveMinuteSellBar := bar_index
+
+bool baseBuy = signalMode == "Peer-confirmed band cross" ? peerConfirmedBuy :
+     signalMode == "Band cross only" ? upwardCross :
+     signalMode == "5m band breakout (1m use)" ? cooledFiveMinuteBuy : legacyBuy
+bool baseSell = signalMode == "Peer-confirmed band cross" ? peerConfirmedSell :
+     signalMode == "Band cross only" ? downwardCross :
+     signalMode == "5m band breakout (1m use)" ? cooledFiveMinuteSell : legacySell
+
+// Previous completed daily candle, matching the dashboard's classic pivots.
+float previousHigh = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+float previousLow = request.security(syminfo.tickerid, "D", low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+float previousClose = request.security(syminfo.tickerid, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+float pivotPoint = (previousHigh + previousLow + previousClose) / 3.0
+float resistance1 = 2.0 * pivotPoint - previousLow
+float support1 = 2.0 * pivotPoint - previousHigh
+float resistance2 = pivotPoint + previousHigh - previousLow
+float support2 = pivotPoint - previousHigh + previousLow
+float resistance3 = previousHigh + 2.0 * (pivotPoint - previousLow)
+float support3 = previousLow - 2.0 * (previousHigh - pivotPoint)
+
+var float[] pendingBuyLevels = array.new_float()
+var int[] pendingBuyAges = array.new_int()
+var float[] pendingSellLevels = array.new_float()
+var int[] pendingSellAges = array.new_int()
+bool pivotFilterOnThisChart = usePivotFilter and timeframe.isminutes and timeframe.multiplier == 5
+bool buySignal = baseBuy
+bool sellSignal = baseSell
+
+if pivotFilterOnThisChart
+    buySignal := false
+    sellSignal := false
+    if array.size(pendingBuyLevels) > 0
+        for i = array.size(pendingBuyLevels) - 1 to 0
+            float level = array.get(pendingBuyLevels, i)
+            int age = array.get(pendingBuyAges, i)
+            if high > level
+                buySignal := true
+                array.remove(pendingBuyLevels, i)
+                array.remove(pendingBuyAges, i)
+            else if age + 1 >= pivotWaitBars
+                array.remove(pendingBuyLevels, i)
+                array.remove(pendingBuyAges, i)
+            else
+                array.set(pendingBuyAges, i, age + 1)
+    if array.size(pendingSellLevels) > 0
+        for i = array.size(pendingSellLevels) - 1 to 0
+            float level = array.get(pendingSellLevels, i)
+            int age = array.get(pendingSellAges, i)
+            if low < level
+                sellSignal := true
+                array.remove(pendingSellLevels, i)
+                array.remove(pendingSellAges, i)
+            else if age + 1 >= pivotWaitBars
+                array.remove(pendingSellLevels, i)
+                array.remove(pendingSellAges, i)
+            else
+                array.set(pendingSellAges, i, age + 1)
+    if baseBuy
+        float nextResistance = f_nearestAbove(close, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+        float distanceToResistance = na(nextResistance) ? na : (nextResistance - close) / math.abs(close)
+        if na(nextResistance) or na(distanceToResistance) or distanceToResistance > pivotDistancePct
+            buySignal := true
+        else
+            array.push(pendingBuyLevels, nextResistance)
+            array.push(pendingBuyAges, 0)
+    if baseSell
+        float nextSupport = f_nearestBelow(close, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+        float distanceToSupport = na(nextSupport) ? na : (close - nextSupport) / math.abs(close)
+        if na(nextSupport) or na(distanceToSupport) or distanceToSupport > pivotDistancePct
+            sellSignal := true
+        else
+            array.push(pendingSellLevels, nextSupport)
+            array.push(pendingSellAges, 0)
+
+float fastMa = maType == "EMA" ? ta.ema(close, maFastLength) : ta.sma(close, maFastLength)
+float slowMa = maType == "EMA" ? ta.ema(close, maSlowLength) : ta.sma(close, maSlowLength)
+
+float candleBody = math.abs(close - open)
+float candleRange = math.max(high - low, syminfo.mintick)
+float lowerWick = math.min(open, close) - low
+float upperWick = high - math.max(open, close)
+float priorMidpoint = (open[1] + close[1]) / 2.0
+bool bullishCandle = close > open
+bool bearishCandle = close < open
+bool doji = candleBody <= candleRange * 0.1
+
+// Shape-based approximations of the TA-Lib patterns used by the dashboard.
+bool hammer = lowerWick >= candleBody * 2.0 and upperWick <= candleBody and close >= low + candleRange * 0.5
+bool invertedHammer = upperWick >= candleBody * 2.0 and lowerWick <= candleBody and close >= low + candleRange * 0.5
+bool shootingStar = upperWick >= candleBody * 2.0 and lowerWick <= candleBody and close <= low + candleRange * 0.5
+bool hangingMan = lowerWick >= candleBody * 2.0 and upperWick <= candleBody and close <= low + candleRange * 0.5
+bool dragonflyDoji = doji and upperWick <= candleRange * 0.1
+bool gravestoneDoji = doji and lowerWick <= candleRange * 0.1
+bool bullishEngulfing = close[1] < open[1] and bullishCandle and open <= close[1] and close >= open[1]
+bool bearishEngulfing = close[1] > open[1] and bearishCandle and open >= close[1] and close <= open[1]
+bool bullishHarami = close[1] < open[1] and bullishCandle and open >= close[1] and close <= open[1]
+bool bearishHarami = close[1] > open[1] and bearishCandle and open <= close[1] and close >= open[1]
+bool piercing = close[1] < open[1] and bullishCandle and open < close[1] and close > priorMidpoint and close < open[1]
+bool darkCloud = close[1] > open[1] and bearishCandle and open > close[1] and close < priorMidpoint and close > open[1]
+bool homingPigeon = close[1] < open[1] and bearishCandle and open >= close[1] and close <= open[1]
+bool counterAttackBull = close[1] < open[1] and bullishCandle and math.abs(close - close[1]) <= candleRange * 0.1
+bool counterAttackBear = close[1] > open[1] and bearishCandle and math.abs(close - close[1]) <= candleRange * 0.1
+bool morningStar = close[2] < open[2] and math.abs(close[1] - open[1]) < math.abs(close[2] - open[2]) * 0.5 and bullishCandle and close > (open[2] + close[2]) / 2.0
+bool eveningStar = close[2] > open[2] and math.abs(close[1] - open[1]) < math.abs(close[2] - open[2]) * 0.5 and bearishCandle and close < (open[2] + close[2]) / 2.0
+bool threeWhiteSoldiers = bullishCandle and bullishCandle[1] and bullishCandle[2] and close > close[1] and close[1] > close[2] and open <= close[1] and open >= open[1]
+bool threeBlackCrows = bearishCandle and bearishCandle[1] and bearishCandle[2] and close < close[1] and close[1] < close[2] and open >= close[1] and open <= open[1]
+bool threeInsideBull = bullishHarami[1] and bullishCandle and close > open[2]
+bool threeInsideBear = bearishHarami[1] and bearishCandle and close < open[2]
+bool threeOutsideBull = bullishEngulfing[1] and bullishCandle and close > close[1]
+bool threeOutsideBear = bearishEngulfing[1] and bearishCandle and close < close[1]
+
+bool bullishPattern = hammer or invertedHammer or dragonflyDoji or bullishEngulfing or bullishHarami or piercing or homingPigeon or counterAttackBull or morningStar or threeWhiteSoldiers or threeInsideBull or threeOutsideBull
+bool bearishPattern = shootingStar or hangingMan or gravestoneDoji or bearishEngulfing or bearishHarami or darkCloud or counterAttackBear or eveningStar or threeBlackCrows or threeInsideBear or threeOutsideBear
+bool anyDirectionalPattern = bullishPattern or bearishPattern
+bool anyDetectedPattern = anyDirectionalPattern or doji
+
+bool nearSupportPivot = f_nearAny(low, pivotReversalPct, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+bool nearResistancePivot = f_nearAny(high, pivotReversalPct, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+bool pivotBetweenForBuy = f_betweenAny(low, close, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+bool pivotBetweenForSell = f_betweenAny(close, high, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+bool genericBullWick = not anyDetectedPattern and candleBody > 0 and lowerWick >= candleBody * 0.75 and (nearSupportPivot or pivotBetweenForBuy)
+bool genericBearWick = not anyDetectedPattern and candleBody > 0 and upperWick >= candleBody * 0.75 and (nearResistancePivot or pivotBetweenForSell)
+bool twoBarBullAtPivot = bullishEngulfing or bullishHarami or piercing or homingPigeon or counterAttackBull
+bool twoBarBearAtPivot = bearishEngulfing or bearishHarami or darkCloud or counterAttackBear
+bool threeBarBullAtPivot = morningStar or threeWhiteSoldiers or threeInsideBull or threeOutsideBull
+bool threeBarBearAtPivot = eveningStar or threeBlackCrows or threeInsideBear or threeOutsideBear
+bool previousLowNearPivot = f_nearAny(low[1], pivotReversalPct, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+bool previousHighNearPivot = f_nearAny(high[1], pivotReversalPct, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+bool singleBullPattern = hammer or invertedHammer or dragonflyDoji
+bool singleBearPattern = shootingStar or hangingMan or gravestoneDoji
+bool twoBarBullPivot = twoBarBullAtPivot and nearSupportPivot and previousLowNearPivot
+bool twoBarBearPivot = twoBarBearAtPivot and nearResistancePivot and previousHighNearPivot
+bool threeBarBullPivot = threeBarBullAtPivot and nearSupportPivot and previousLowNearPivot and f_nearAny(low[2], pivotReversalPct, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+bool threeBarBearPivot = threeBarBearAtPivot and nearResistancePivot and previousHighNearPivot and f_nearAny(high[2], pivotReversalPct, pivotPoint, resistance1, resistance2, resistance3, support1, support2, support3)
+bool pivotReversal = singleBullPattern and nearSupportPivot or
+     singleBearPattern and nearResistancePivot or
+     twoBarBullPivot or twoBarBearPivot or
+     threeBarBullPivot or threeBarBearPivot or
+     genericBullWick or genericBearWick
+
+bool lowNearFiveMinuteBand = f_nearLevel(low, fiveSMin, bandReversalPct)
+bool highNearFiveMinuteBand = f_nearLevel(high, fiveSMax, bandReversalPct)
+bool lowTouchesFiveMinuteBand = low <= fiveSMin and fiveSMin <= close
+bool highTouchesFiveMinuteBand = close <= fiveSMax and fiveSMax <= high
+bool bandBullWick = not anyDetectedPattern and candleBody > 0 and lowerWick >= candleBody * 0.75 and (lowNearFiveMinuteBand or lowTouchesFiveMinuteBand)
+bool bandBearWick = not anyDetectedPattern and candleBody > 0 and upperWick >= candleBody * 0.75 and (highNearFiveMinuteBand or highTouchesFiveMinuteBand)
+bool bandSingleBullPattern = singleBullPattern and lowNearFiveMinuteBand
+bool bandSingleBearPattern = singleBearPattern and highNearFiveMinuteBand
+bool bandTwoBarBullPattern = twoBarBullAtPivot and lowNearFiveMinuteBand and f_nearLevel(low[1], fiveSMin, bandReversalPct)
+bool bandTwoBarBearPattern = twoBarBearAtPivot and highNearFiveMinuteBand and f_nearLevel(high[1], fiveSMax, bandReversalPct)
+bool threeBarBullBand = threeBarBullAtPivot and lowNearFiveMinuteBand and f_nearLevel(low[1], fiveSMin, bandReversalPct) and f_nearLevel(low[2], fiveSMin, bandReversalPct)
+bool threeBarBearBand = threeBarBearAtPivot and highNearFiveMinuteBand and f_nearLevel(high[1], fiveSMax, bandReversalPct) and f_nearLevel(high[2], fiveSMax, bandReversalPct)
+bool gaussianReversal = not pivotReversal and (
+     bandSingleBullPattern or bandSingleBearPattern or
+     bandTwoBarBullPattern or bandTwoBarBearPattern or
+     threeBarBullBand or threeBarBearBand or
+     bandBullWick or bandBearWick)
+
+plot(gma, "GMA", color=color.blue, linewidth=2)
+plot(showGmaSignal ? gmaSignal : na, "GMA signal (EMA)", color=color.new(color.blue, 55), linewidth=1)
+plot(sMax, "SMax", color=color.purple, linewidth=2)
+plot(sMin, "SMin", color=color.purple, linewidth=2)
+plot(showFiveMinuteBands ? fiveSMax : na, "5m SMax projection", color=color.white, linewidth=2, style=plot.style_linebr)
+plot(showFiveMinuteBands ? fiveSMin : na, "5m SMin projection", color=color.white, linewidth=2, style=plot.style_linebr)
+plot(showMovingAverages ? fastMa : na, "EMA/SMA fast", color=color.orange, linewidth=2)
+plot(showMovingAverages ? slowMa : na, "EMA/SMA slow", color=color.aqua, linewidth=2)
+plot(showPreviousDayPivots ? pivotPoint : na, "PP", color=color.yellow, style=plot.style_stepline)
+plot(showPreviousDayPivots ? resistance1 : na, "R1", color=color.red, style=plot.style_stepline)
+plot(showPreviousDayPivots ? resistance2 : na, "R2", color=color.new(color.red, 20), style=plot.style_stepline)
+plot(showPreviousDayPivots ? resistance3 : na, "R3", color=color.new(color.red, 35), style=plot.style_stepline)
+plot(showPreviousDayPivots ? support1 : na, "S1", color=color.green, style=plot.style_stepline)
+plot(showPreviousDayPivots ? support2 : na, "S2", color=color.new(color.green, 20), style=plot.style_stepline)
+plot(showPreviousDayPivots ? support3 : na, "S3", color=color.new(color.green, 35), style=plot.style_stepline)
+
+barcolor(showDashboardCandleColors ? (close >= open ? color.rgb(0, 200, 83) : color.rgb(255, 23, 68)) : na)
+color reversalColor = pivotReversal ? color.yellow : gaussianReversal ? color.deeppink : na
+plotcandle(showReversalHighlights and not na(reversalColor) ? open : na,
+     showReversalHighlights and not na(reversalColor) ? high : na,
+     showReversalHighlights and not na(reversalColor) ? low : na,
+     showReversalHighlights and not na(reversalColor) ? close : na,
+     title="Reversal candle highlight", color=reversalColor, wickcolor=reversalColor, bordercolor=reversalColor)
+
+plotshape(showSignals and buySignal, title="BUY", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="BUY", textcolor=color.white)
+plotshape(showSignals and sellSignal, title="SELL", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL", textcolor=color.white)
+plotshape(showExitMarkers and sellSignal, title="Exit long (opposite sell)", style=shape.xcross, location=location.abovebar, color=color.orange, size=size.tiny, text="XL")
+plotshape(showExitMarkers and buySignal, title="Exit short (opposite buy)", style=shape.xcross, location=location.belowbar, color=color.aqua, size=size.tiny, text="XS")
+
+alertcondition(buySignal, "Gaussian Dashboard BUY", "Gaussian Dashboard BUY signal")
+alertcondition(sellSignal, "Gaussian Dashboard SELL", "Gaussian Dashboard SELL signal")
+alertcondition(showExitMarkers and sellSignal, "Exit long (opposite sell)", "Opposite SELL signal: possible long exit")
+alertcondition(showExitMarkers and buySignal, "Exit short (opposite buy)", "Opposite BUY signal: possible short exit")
+alertcondition(pivotReversal, "Pivot reversal candle", "Candle pattern near a previous-day pivot")
+alertcondition(gaussianReversal, "Gaussian reversal candle", "Candle pattern near the projected 5-minute Gaussian band")
+
+var table status = table.new(position.top_right, 1, 1)
+if barstate.islast
+    string statusText = signalMode == "Peer-confirmed band cross" and not peerAvailable ? "Peer data unavailable: check confirmation symbol" :
+         signalMode == "5m band breakout (1m use)" and timeframe.isminutes and timeframe.multiplier != 1 ? "5m breakout mode is intended for a 1-minute chart" : ""
+    table.cell(status, 0, 0, statusText, text_color=color.white, bgcolor=statusText == "" ? color.new(color.black, 100) : color.new(color.red, 15))
